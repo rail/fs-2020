@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Laptop, Windows, Encryption</title>
+    <meta charset="utf-8">
+    <style>
+      @import url(https://fonts.googleapis.com/css?family=Yanone+Kaffeesatz);
+      @import url(https://fonts.googleapis.com/css?family=Droid+Serif:400,700,400italic);
+      @import url(https://fonts.googleapis.com/css?family=Ubuntu+Mono:400,700,400italic);
+
+      body { font-family: 'Droid Serif'; }
+      h1, h2, h3 {
+        font-family: 'Yanone Kaffeesatz';
+        font-weight: normal;
+      }
+      .remark-code, .remark-inline-code { font-family: 'Ubuntu Mono'; }
+    </style>
+  </head>
+  <body>
+    <textarea id="source">
+
+class: center, middle
+
+# Laptop, Windows, Encryption
+### How Windows helps people investigating new technologies
+
+---
+# Background
+
+- Lenovo laptop (Gen5), Windows preloaded
+- Shrink partition, install Linux, enable Windows FDE (bitlocker)
+- Update firmware, lose EFI entries, recover entries, get bitlocker locked
+- Decide to reuse Windows partition
+
+---
+# My old setup
+
+- /boot/efi: vfat
+- /boot: ext4
+- LUKS
+  - LVM (we used to use it heavily in AWS)
+    - Physical volume (PV)
+    - Group Volume (GP)
+    - Logical Volume (LV)
+        - SWAP
+        - / aka “root”: ext4
+        - /home: ext4
+
+---
+# Time to re-install!
+
+- NixOS makes re-installation ~30s modulo file copying
+- Sick of LVM
+- Extra layer of LUKS
+- Easy (re)partitioning
+- Snapshots (no LVM, please)
+- Btrfs or ZFS
+
+---
+# Now
+
+- /boot/efi: vfat
+- /boot: ext4 (TODO: encrypt)
+- SWAP
+- ZFS (NO LVM!)
+  - / aka “root”
+  - /home
+  - /var/lib/docker
+
+---
+# ZFS
+
+- CoW (mooooooo!)
+- Merkle Tree checksumming (scrub vs fsck: data verification vs block verification) - no journal needed
+- Pools, data sets
+- Volume manager included
+- RAID (meh), Cache, Write Log
+- Compression (/home 170G => 130G)
+- Deduplication (meh)
+- Encryption
+- Snapshots
+
+---
+# Pools
+
+```shell
+# zpool create rpool /dev/sda
+
+# zpool create rpool mirror /dev/sda /dev/sdb
+
+# zpool create rpool mirror/raidz /dev/sda /dev/sdb
+
+# zpool add rpool /dev/sdc
+```
+
+---
+# Datasets
+
+```shell
+# zfs create rpool/HOME -o mountpoint=/home
+
+# zfs create -o compression=lz4 rpool/HOME/rail
+
+# zfs set quota=100M rpool/HOME/rail (reported in df)
+
+# zfs share sharenfs/sharesmb rpool/HOME/rail
+
+# zfs destroy rpool/HOME/rail
+```
+
+---
+# Snapshots (R/O)
+
+```shell
+# zfs snapshot rpool/HOME/rail@now
+
+# zfs send rpool/HOME/rail@now | zfs recv backup/HOME
+
+# zfs send rpool/HOME/rail@now | ssh me@host zfs recv backup/HOME
+
+# zfs snapshot rpool/HOME/rail@really-now
+
+# zfs send -I rpool/HOME/rail@now rpool/HOME/rail@really-now | zfs recv backup/HOME
+
+$ ls rpool/HOME/rail/.zfs/snapshot
+```
+
+---
+# Clone and Promote (R/W)
+
+```shell
+# zfs clone backup/HOME/rail@now /mnt
+
+# zfs promote /mnt
+```
+
+
+---
+# Metadata
+
+```shell
+$ zfs get compression,compressratio,encryption rpool/DOCKER
+NAME          PROPERTY       VALUE        SOURCE
+rpool/DOCKER  compression    lz4          inherited from rpool
+rpool/DOCKER  compressratio  1.83x        -
+rpool/DOCKER  encryption     aes-256-gcm  -
+```
+
+
+## Custom Metadata
+
+```shell
+$ zfs get nixos:shutdown-time rpool/HOME
+NAME        PROPERTY             VALUE                SOURCE
+rpool/HOME  nixos:shutdown-time  -                    -
+
+$ zfs get org.znapzend:enabled rpool/HOME
+NAME        PROPERTY              VALUE                 SOURCE
+rpool/HOME  org.znapzend:enabled  on                    local
+```
+
+---
+# Backups
+
+- Take (instantaneous) snapshot every N minutes (show real output)
+- `zfs send | (ssh) zfs recv` for extra redundancy
+- Diff only
+- Like `dd`, but data based vs block based
+- Use "raw" mode to send encrypted data
+- Easy to script
+
+---
+# ZnapZend
+```nix
+services.znapzend = {
+enable = true;
+...
+  zetup = {
+    "rpool/HOME" = {
+      plan = "15min=>5min,4hour=>15min,2day=>1hour,7day=>1day,3week=>1week";
+      enable = true;
+      destinations = {
+        local = {
+          dataset = "backup/HOME";
+          plan = "1hour=>5min,4day=>1hour,1week=>1day,1year=>1week,10year=>1month";
+        };
+      };
+    };
+  };
+};
+
+```
+
+---
+# Demo
+
+```shell
+$ zpool status
+
+$ zfs list
+
+$ ls -la /home
+
+$ ls /home/.zfs
+
+$ ls /home/.zfs/snapshot
+
+$ sudo zpool history
+
+$ docker pull python:3.8 && zfs list rpool/DOCKER
+```
+
+
+    </textarea>
+    <script src="https://remarkjs.com/downloads/remark-latest.min.js">
+    </script>
+    <script>
+      var slideshow = remark.create();
+    </script>
+  </body>
+</html>
