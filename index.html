@@ -195,7 +195,11 @@ enable = true;
 # Demo
 
 ```shell
+$ zpool list
+
 $ zpool status
+
+$ sudo zpool history
 
 $ zfs list
 
@@ -204,8 +208,6 @@ $ ls -la /home
 $ ls /home/.zfs
 
 $ ls /home/.zfs/snapshot
-
-$ sudo zpool history
 
 $ docker pull python:3.8 && zfs list rpool/DOCKER
 ```
